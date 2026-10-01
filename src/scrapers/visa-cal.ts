@@ -55,7 +55,7 @@ export async function fetchCalApi<TResult>(
   );
 
   const endpoint = url.split('?')[0];
-  const snippet = String(text).slice(0, 200).replace(/s+/g, ' ');
+  const snippet = String(text).slice(0, 200).replace(/\s+/g, ' ');
   if (status < 200 || status >= 300) {
     throw new Error(`Cal API request to ${endpoint} failed with status ${status}: ${snippet}`);
   }
