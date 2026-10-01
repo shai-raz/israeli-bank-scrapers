@@ -39,22 +39,28 @@ export async function fetchCalApi<TResult>(
   data: Record<string, any>,
   headers: Record<string, string>,
 ): Promise<TResult> {
-  const [text, status] = await page.evaluate(
-    async (innerUrl: string, innerData: Record<string, any>, innerHeaders: Record<string, string>) => {
-      const response = await fetch(innerUrl, {
-        method: 'POST',
-        body: JSON.stringify(innerData),
-        credentials: 'include',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...innerHeaders },
-      });
-      return [await response.text(), response.status] as const;
-    },
-    url,
-    data,
-    headers,
-  );
-
   const endpoint = url.split('?')[0];
+  let text: string;
+  let status: number;
+  try {
+    [text, status] = await page.evaluate(
+      async (innerUrl: string, innerData: Record<string, any>, innerHeaders: Record<string, string>) => {
+        const response = await fetch(innerUrl, {
+          method: 'POST',
+          body: JSON.stringify(innerData),
+          credentials: 'include',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...innerHeaders },
+        });
+        return [await response.text(), response.status] as const;
+      },
+      url,
+      data,
+      headers,
+    );
+  } catch (e) {
+    throw new Error(`Cal API request to ${endpoint} failed in the browser: ${(e as Error)?.message ?? String(e)}`);
+  }
+
   const snippet = String(text).slice(0, 200).replace(/\s+/g, ' ');
   if (status < 200 || status >= 300) {
     throw new Error(`Cal API request to ${endpoint} failed with status ${status}: ${snippet}`);

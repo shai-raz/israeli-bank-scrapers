@@ -82,4 +82,11 @@ describe('fetchCalApi', () => {
     const page = mockPage(['<html>Request Rejected</html>', 400]);
     await expect(fetchCalApi(page, URL, {}, {})).rejects.toThrow(`${URL} failed with status 400`);
   });
+
+  test('names the endpoint when the in-page fetch rejects', async () => {
+    const page = { evaluate: jest.fn().mockRejectedValue(new TypeError('Failed to fetch')) } as any;
+    await expect(fetchCalApi(page, `${URL}?a=1`, {}, {})).rejects.toThrow(
+      `Cal API request to ${URL} failed in the browser: Failed to fetch`,
+    );
+  });
 });
