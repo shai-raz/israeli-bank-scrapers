@@ -1,7 +1,7 @@
 import { SCRAPERS } from '../definitions';
 import { exportTransactions, extendAsyncTimeout, getTestsConfig, maybeTestCompanyAPI } from '../tests/tests-utils';
 import { LoginResults } from './base-scraper-with-browser';
-import VisaCalScraper from './visa-cal';
+import VisaCalScraper, { fetchCalApi } from './visa-cal';
 
 const COMPANY_ID = 'visaCal'; // TODO this property should be hard-coded in the provider
 const testsConfig = getTestsConfig();
@@ -50,5 +50,36 @@ describe('VisaCal legacy scraper', () => {
     // uncomment to test multiple accounts
     // expect(result?.accounts?.length).toEqual(2)
     exportTransactions(COMPANY_ID, result.accounts || []);
+  });
+});
+
+describe('fetchCalApi', () => {
+  const URL = 'https://api.cal-online.co.il/Frames/api/Frames/GetFrameStatus';
+  const mockPage = (result: [string, number]) => ({ evaluate: jest.fn().mockResolvedValue(result) }) as any;
+
+  test('parses a JSON success response and passes request details into the page', async () => {
+    const page = mockPage(['{"statusCode":1,"result":{"a":2}}', 200]);
+    const result = await fetchCalApi(page, URL, { x: 1 }, { Authorization: 'CALAuthScheme t', 'X-Site-Id': 's' });
+    expect(result).toEqual({ statusCode: 1, result: { a: 2 } });
+    expect(page.evaluate).toHaveBeenCalledWith(
+      expect.any(Function),
+      URL,
+      { x: 1 },
+      expect.objectContaining({ 'X-Site-Id': 's' }),
+    );
+  });
+
+  test('throws a clear error naming endpoint and status on an HTML block page', async () => {
+    const page = mockPage(['<html><head>Request Rejected</head></html>', 200]);
+    const promise = fetchCalApi(page, URL, {}, {});
+    await expect(promise).rejects.toThrow(/non-JSON response/);
+    await expect(promise).rejects.toThrow(URL);
+    await expect(promise).rejects.toThrow(/status 200/);
+    await expect(promise).rejects.not.toThrow(/Unexpected token/);
+  });
+
+  test('throws a clear error on a non-2xx status', async () => {
+    const page = mockPage(['<html>Request Rejected</html>', 400]);
+    await expect(fetchCalApi(page, URL, {}, {})).rejects.toThrow(`${URL} failed with status 400`);
   });
 });
