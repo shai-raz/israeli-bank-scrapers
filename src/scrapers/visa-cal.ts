@@ -562,12 +562,17 @@ class VisaCalScraper extends BaseScraperWithBrowser<ScraperSpecificCredentials> 
     xSiteId: string,
   ): Promise<TransactionsAccount> {
     debug('fetch frames (misgarot) for card %s', card.cardUniqueId);
-    const frames = await fetchCalApi<FramesResponse>(
-      this.page,
-      FRAMES_REQUEST_ENDPOINT,
-      { cardsForFrameData: [{ cardUniqueId: card.cardUniqueId }] },
-      { Authorization, 'X-Site-Id': xSiteId },
-    );
+    let frames: FramesResponse = {};
+    try {
+      frames = await fetchCalApi<FramesResponse>(
+        this.page,
+        FRAMES_REQUEST_ENDPOINT,
+        { cardsForFrameData: [{ cardUniqueId: card.cardUniqueId }] },
+        { Authorization, 'X-Site-Id': xSiteId },
+      );
+    } catch (e) {
+      debug('failed to fetch frames for card %s: %s', card.cardUniqueId, (e as Error)?.message);
+    }
 
     debug('frames response for card %s: %O', card.cardUniqueId, frames);
 
@@ -612,12 +617,17 @@ class VisaCalScraper extends BaseScraperWithBrowser<ScraperSpecificCredentials> 
     const allMonthsData: CardTransactionDetails[] = [];
 
     debug(`fetch pending transactions for card ${card.cardUniqueId}`);
-    let pendingData = await fetchCalApi<any>(
-      this.page,
-      PENDING_TRANSACTIONS_REQUEST_ENDPOINT,
-      { cardUniqueIDArray: [card.cardUniqueId] },
-      { Authorization, 'X-Site-Id': xSiteId },
-    );
+    let pendingData: any = null;
+    try {
+      pendingData = await fetchCalApi<any>(
+        this.page,
+        PENDING_TRANSACTIONS_REQUEST_ENDPOINT,
+        { cardUniqueIDArray: [card.cardUniqueId] },
+        { Authorization, 'X-Site-Id': xSiteId },
+      );
+    } catch (e) {
+      debug('failed to fetch pending transactions for card %s: %s', card.last4Digits, (e as Error)?.message);
+    }
 
     debug(`fetch completed transactions for card ${card.cardUniqueId}`);
     for (let i = 0; i <= months; i++) {

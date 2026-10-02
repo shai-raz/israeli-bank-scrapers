@@ -1,3 +1,4 @@
+import moment from 'moment';
 import { SCRAPERS } from '../definitions';
 import { exportTransactions, extendAsyncTimeout, getTestsConfig, maybeTestCompanyAPI } from '../tests/tests-utils';
 import { LoginResults } from './base-scraper-with-browser';
@@ -88,5 +89,52 @@ describe('fetchCalApi', () => {
     await expect(fetchCalApi(page, `${URL}?a=1`, {}, {})).rejects.toThrow(
       `Cal API request to ${URL} failed in the browser: Failed to fetch`,
     );
+  });
+});
+
+describe('fetchCardData optional requests', () => {
+  const FRAMES = 'https://api.cal-online.co.il/Frames/api/Frames/GetFrameStatus';
+  const PENDING = 'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
+  const card = { cardUniqueId: 'u1', last4Digits: '1234' };
+
+  const run = async (failing: string) => {
+    const evaluate = jest.fn().mockImplementation(async (_fn: unknown, url: string) => {
+      if (url === failing) throw new TypeError('Failed to fetch');
+      if (url === FRAMES) {
+        return [
+          JSON.stringify({
+            statusCode: 1,
+            result: { calIssuedCards: { cardLevelFrames: [{ cardUniqueId: 'u1', nextTotalDebit: 50 }] } },
+          }),
+          200,
+        ];
+      }
+      if (url === PENDING) return [JSON.stringify({ statusCode: 1, result: { cardsList: [] } }), 200];
+      return [
+        JSON.stringify({
+          statusCode: 1,
+          result: { bankAccounts: [{ debitDates: [], immidiateDebits: { debitDays: [] } }] },
+        }),
+        200,
+      ];
+    });
+    const scraper: any = new VisaCalScraper({ companyId: 'visaCal' as any, startTime: new Date() } as any);
+    scraper.page = { evaluate };
+    return scraper.fetchCardData(card, moment(), new Date(), 0, 'CALAuthScheme t', 'site');
+  };
+
+  test('a pending transactions failure is soft and the account is still returned', async () => {
+    const account = await run(PENDING);
+    expect(account.txns).toEqual([]);
+    expect(account.accountNumber).toBe('1234');
+    expect(account.balance).toBe(-50);
+  });
+
+  test('a frames failure is soft and leaves balance and cardFrame undefined', async () => {
+    const account = await run(FRAMES);
+    expect(account.txns).toEqual([]);
+    expect(account.balance).toBeUndefined();
+    expect(account.balanceDate).toBeUndefined();
+    expect(account.cardFrame).toBeUndefined();
   });
 });
