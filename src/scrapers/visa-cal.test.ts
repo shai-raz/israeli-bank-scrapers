@@ -97,26 +97,24 @@ describe('fetchCardData optional requests', () => {
   const PENDING = 'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
   const card = { cardUniqueId: 'u1', last4Digits: '1234' };
 
-  const run = async (failing: string) => {
-    const evaluate = jest.fn().mockImplementation(async (_fn: unknown, url: string) => {
-      if (url === failing) throw new TypeError('Failed to fetch');
+  const run = (failing: string) => {
+    const evaluate = jest.fn().mockImplementation((_fn: unknown, url: string) => {
+      if (url === failing) return Promise.reject(new TypeError('Failed to fetch'));
+      let body: object;
       if (url === FRAMES) {
-        return [
-          JSON.stringify({
-            statusCode: 1,
-            result: { calIssuedCards: { cardLevelFrames: [{ cardUniqueId: 'u1', nextTotalDebit: 50 }] } },
-          }),
-          200,
-        ];
-      }
-      if (url === PENDING) return [JSON.stringify({ statusCode: 1, result: { cardsList: [] } }), 200];
-      return [
-        JSON.stringify({
+        body = {
+          statusCode: 1,
+          result: { calIssuedCards: { cardLevelFrames: [{ cardUniqueId: 'u1', nextTotalDebit: 50 }] } },
+        };
+      } else if (url === PENDING) {
+        body = { statusCode: 1, result: { cardsList: [] } };
+      } else {
+        body = {
           statusCode: 1,
           result: { bankAccounts: [{ debitDates: [], immidiateDebits: { debitDays: [] } }] },
-        }),
-        200,
-      ];
+        };
+      }
+      return Promise.resolve([JSON.stringify(body), 200]);
     });
     const scraper: any = new VisaCalScraper({ companyId: 'visaCal' as any, startTime: new Date() } as any);
     scraper.page = { evaluate };
