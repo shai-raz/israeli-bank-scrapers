@@ -28,8 +28,7 @@ const PENDING_TRANSACTIONS_REQUEST_ENDPOINT =
   'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
 const SSO_AUTHORIZATION_REQUEST_ENDPOINT = 'https://connect.cal-online.co.il/col-rest/calconnect/authentication/SSO';
 
-// Used only when the in-page request fails. The Origin/Referer are what the API accepted before requests
-// moved into the page.
+// Used only when the in-page request fails: mirrors the headers Cal's own web app sends from digital-web.cal-online.co.il.
 const nodeFallbackHeaders = {
   ...apiHeaders,
   Origin: 'https://digital-web.cal-online.co.il',
