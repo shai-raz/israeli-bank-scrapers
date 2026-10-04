@@ -92,7 +92,7 @@ export async function fetchCalApi<TResult>(
       const response = await fetch(url, {
         method: 'POST',
         body: JSON.stringify(data),
-        headers: { 'Content-Type': 'application/json', ...nodeFallbackHeaders, ...headers },
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...nodeFallbackHeaders, ...headers },
       });
       [text, status] = [await response.text(), response.status];
     } catch (fallbackError) {
