@@ -119,6 +119,7 @@ describe('fetchCalApi', () => {
             Origin: 'https://digital-web.cal-online.co.il',
             Referer: 'https://digital-web.cal-online.co.il',
             Authorization: 'a',
+            Accept: 'application/json',
             'Content-Type': 'application/json',
           }),
         );
@@ -163,6 +164,9 @@ describe('fetchCardData optional requests', () => {
     global.fetch = originalFetch;
   });
 
+  const TRANSACTIONS_URL =
+    'https://api.cal-online.co.il/Transactions/api/transactionsDetails/getCardTransactionsDetails';
+
   const run = (failing: string) => {
     const evaluate = jest.fn().mockImplementation((_fn: unknown, url: string) => {
       if (url === failing) return Promise.reject(new TypeError('Failed to fetch'));
@@ -200,5 +204,12 @@ describe('fetchCardData optional requests', () => {
     expect(account.balance).toBeUndefined();
     expect(account.balanceDate).toBeUndefined();
     expect(account.cardFrame).toBeUndefined();
+  });
+
+  test('a monthly transactions failure is fatal', async () => {
+    const promise = run(TRANSACTIONS_URL);
+    await expect(promise).rejects.toThrow(TRANSACTIONS_URL);
+    await expect(promise).rejects.toThrow(/Failed to fetch/);
+    await expect(promise).rejects.toThrow(/node fallback unavailable/);
   });
 });
