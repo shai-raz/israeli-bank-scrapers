@@ -28,10 +28,37 @@ const PENDING_TRANSACTIONS_REQUEST_ENDPOINT =
   'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
 const SSO_AUTHORIZATION_REQUEST_ENDPOINT = 'https://connect.cal-online.co.il/col-rest/calconnect/authentication/SSO';
 
+// Used only when the in-page request fails: mirrors the headers Cal's own web app sends from digital-web.cal-online.co.il.
+const nodeFallbackHeaders = {
+  ...apiHeaders,
+  Origin: 'https://digital-web.cal-online.co.il',
+  Referer: 'https://digital-web.cal-online.co.il',
+  'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Sec-Fetch-Site': 'same-site',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Dest': 'empty',
+};
+
+function parseCalResponse<TResult>(endpoint: string, text: string, status: number): TResult {
+  const snippet = String(text).slice(0, 200).replace(/\s+/g, ' ');
+  if (status < 200 || status >= 300) {
+    throw new Error(`Cal API request to ${endpoint} failed with status ${status}: ${snippet}`);
+  }
+  try {
+    return JSON.parse(text) as TResult;
+  } catch {
+    throw new Error(`Cal API request to ${endpoint} returned a non-JSON response (status ${status}): ${snippet}`);
+  }
+}
+
 /**
  * Sends a POST request to the Cal API from inside the logged-in page, so that all traffic (including
  * any proxy configured on the browser) leaves from the browser. `Origin` and `Referer` are set by the
- * browser itself since the page is on digital-web.cal-online.co.il.
+ * browser itself.
+ *
+ * If the in-page request produces no HTTP response (CORS failure when the dashboard is not on
+ * digital-web.cal-online.co.il, or the page navigated and its context is gone), the request is retried
+ * once from Node. Any HTTP response from the page, whatever its status, is final.
  */
 export async function fetchCalApi<TResult>(
   page: Page,
@@ -58,18 +85,34 @@ export async function fetchCalApi<TResult>(
       headers,
     );
   } catch (e) {
-    throw new Error(`Cal API request to ${endpoint} failed in the browser: ${(e as Error)?.message ?? String(e)}`);
+    const inPageError = (e as Error)?.message ?? String(e);
+    debug('in-page request to %s failed, falling back to node: %s', endpoint, inPageError);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        body: JSON.stringify(data),
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...nodeFallbackHeaders, ...headers },
+      });
+      [text, status] = [await response.text(), response.status];
+    } catch (fallbackError) {
+      throw new Error(
+        `Cal API request to ${endpoint} failed in the browser: ${inPageError}; node fallback also failed: ${
+          (fallbackError as Error)?.message ?? String(fallbackError)
+        }`,
+      );
+    }
+    try {
+      return parseCalResponse<TResult>(endpoint, text, status);
+    } catch (fallbackError) {
+      throw new Error(
+        `Cal API request to ${endpoint} failed in the browser: ${inPageError}; node fallback also failed: ${
+          (fallbackError as Error).message
+        }`,
+      );
+    }
   }
 
-  const snippet = String(text).slice(0, 200).replace(/\s+/g, ' ');
-  if (status < 200 || status >= 300) {
-    throw new Error(`Cal API request to ${endpoint} failed with status ${status}: ${snippet}`);
-  }
-  try {
-    return JSON.parse(text) as TResult;
-  } catch {
-    throw new Error(`Cal API request to ${endpoint} returned a non-JSON response (status ${status}): ${snippet}`);
-  }
+  return parseCalResponse<TResult>(endpoint, text, status);
 }
 
 const InvalidPasswordMessage = 'שם המשתמש או הסיסמה שהוזנו שגויים';

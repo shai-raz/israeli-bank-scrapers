@@ -84,11 +84,70 @@ describe('fetchCalApi', () => {
     await expect(fetchCalApi(page, URL, {}, {})).rejects.toThrow(`${URL} failed with status 400`);
   });
 
-  test('names the endpoint when the in-page fetch rejects', async () => {
-    const page = { evaluate: jest.fn().mockRejectedValue(new TypeError('Failed to fetch')) } as any;
-    await expect(fetchCalApi(page, `${URL}?a=1`, {}, {})).rejects.toThrow(
-      `Cal API request to ${URL} failed in the browser: Failed to fetch`,
+  describe('node fallback', () => {
+    const originalFetch = global.fetch;
+    const nodeFetch = jest.fn();
+    const rejectingPage = (message: string) => ({ evaluate: jest.fn().mockRejectedValue(new Error(message)) }) as any;
+    const nodeResponse = (body: string, status: number) => ({ text: () => Promise.resolve(body), status });
+
+    beforeEach(() => {
+      nodeFetch.mockReset();
+      global.fetch = nodeFetch as any;
+    });
+    afterAll(() => {
+      global.fetch = originalFetch;
+    });
+
+    test('does not call node fetch when the in-page request succeeds', async () => {
+      await fetchCalApi(mockPage(['{"a":1}', 200]), URL, {}, {});
+      expect(nodeFetch).not.toHaveBeenCalled();
+    });
+
+    test.each(['Failed to fetch', 'Execution context was destroyed, most likely because of a navigation'])(
+      'falls back to node when the in-page request rejects with "%s"',
+      async message => {
+        nodeFetch.mockResolvedValue(nodeResponse('{"statusCode":1}', 200));
+        const result = await fetchCalApi(rejectingPage(message), `${URL}?a=1`, { x: 1 }, { Authorization: 'a' });
+        expect(result).toEqual({ statusCode: 1 });
+        expect(nodeFetch).toHaveBeenCalledTimes(1);
+        const [calledUrl, init] = nodeFetch.mock.calls[0];
+        expect(calledUrl).toBe(`${URL}?a=1`);
+        expect(init.method).toBe('POST');
+        expect(init.body).toBe('{"x":1}');
+        expect(init.headers).toEqual(
+          expect.objectContaining({
+            Origin: 'https://digital-web.cal-online.co.il',
+            Referer: 'https://digital-web.cal-online.co.il',
+            Authorization: 'a',
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          }),
+        );
+      },
     );
+
+    test('does not fall back when the page got an HTTP response', async () => {
+      await expect(fetchCalApi(mockPage(['<html>Rejected</html>', 400]), URL, {}, {})).rejects.toThrow(
+        'failed with status 400',
+      );
+      expect(nodeFetch).not.toHaveBeenCalled();
+    });
+
+    test('names the endpoint and both failures when the fallback returns a bad response', async () => {
+      nodeFetch.mockResolvedValue(nodeResponse('<html>Request Rejected</html>', 403));
+      const promise = fetchCalApi(rejectingPage('Failed to fetch'), `${URL}?a=1`, {}, {});
+      await expect(promise).rejects.toThrow(URL);
+      await expect(promise).rejects.toThrow(/Failed to fetch/);
+      await expect(promise).rejects.toThrow(/failed with status 403/);
+    });
+
+    test('names the endpoint and both failures when the fallback rejects', async () => {
+      nodeFetch.mockRejectedValue(new Error('ECONNRESET'));
+      const promise = fetchCalApi(rejectingPage('Failed to fetch'), URL, {}, {});
+      await expect(promise).rejects.toThrow(URL);
+      await expect(promise).rejects.toThrow(/Failed to fetch/);
+      await expect(promise).rejects.toThrow(/ECONNRESET/);
+    });
   });
 });
 
@@ -96,6 +155,17 @@ describe('fetchCardData optional requests', () => {
   const FRAMES = 'https://api.cal-online.co.il/Frames/api/Frames/GetFrameStatus';
   const PENDING = 'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
   const card = { cardUniqueId: 'u1', last4Digits: '1234' };
+
+  const originalFetch = global.fetch;
+  beforeEach(() => {
+    global.fetch = jest.fn().mockRejectedValue(new Error('node fallback unavailable')) as any;
+  });
+  afterAll(() => {
+    global.fetch = originalFetch;
+  });
+
+  const TRANSACTIONS_URL =
+    'https://api.cal-online.co.il/Transactions/api/transactionsDetails/getCardTransactionsDetails';
 
   const run = (failing: string) => {
     const evaluate = jest.fn().mockImplementation((_fn: unknown, url: string) => {
@@ -134,5 +204,12 @@ describe('fetchCardData optional requests', () => {
     expect(account.balance).toBeUndefined();
     expect(account.balanceDate).toBeUndefined();
     expect(account.cardFrame).toBeUndefined();
+  });
+
+  test('a monthly transactions failure is fatal', async () => {
+    const promise = run(TRANSACTIONS_URL);
+    await expect(promise).rejects.toThrow(TRANSACTIONS_URL);
+    await expect(promise).rejects.toThrow(/Failed to fetch/);
+    await expect(promise).rejects.toThrow(/node fallback unavailable/);
   });
 });
