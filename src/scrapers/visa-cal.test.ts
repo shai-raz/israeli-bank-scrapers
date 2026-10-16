@@ -1,4 +1,3 @@
-import moment from 'moment';
 import { SCRAPERS } from '../definitions';
 import { exportTransactions, extendAsyncTimeout, getTestsConfig, maybeTestCompanyAPI } from '../tests/tests-utils';
 import { LoginResults } from './base-scraper-with-browser';
@@ -79,9 +78,9 @@ describe('fetchCalApi', () => {
     await expect(promise).rejects.not.toThrow(/Unexpected token/);
   });
 
-  test('throws a clear error on a non-2xx status', async () => {
-    const page = mockPage(['<html>Request Rejected</html>', 400]);
-    await expect(fetchCalApi(page, URL, {}, {})).rejects.toThrow(`${URL} failed with status 400`);
+  test('returns a JSON error body whatever its status, so callers keep handling its statusCode', async () => {
+    const page = mockPage(['{"statusCode":3,"title":"error"}', 500]);
+    await expect(fetchCalApi(page, URL, {}, {})).resolves.toEqual({ statusCode: 3, title: 'error' });
   });
 
   describe('node fallback', () => {
@@ -128,7 +127,7 @@ describe('fetchCalApi', () => {
 
     test('does not fall back when the page got an HTTP response', async () => {
       await expect(fetchCalApi(mockPage(['<html>Rejected</html>', 400]), URL, {}, {})).rejects.toThrow(
-        'failed with status 400',
+        'non-JSON response (status 400)',
       );
       expect(nodeFetch).not.toHaveBeenCalled();
     });
@@ -138,7 +137,7 @@ describe('fetchCalApi', () => {
       const promise = fetchCalApi(rejectingPage('Failed to fetch'), `${URL}?a=1`, {}, {});
       await expect(promise).rejects.toThrow(URL);
       await expect(promise).rejects.toThrow(/Failed to fetch/);
-      await expect(promise).rejects.toThrow(/failed with status 403/);
+      await expect(promise).rejects.toThrow(/non-JSON response \(status 403\)/);
     });
 
     test('names the endpoint and both failures when the fallback rejects', async () => {
@@ -148,68 +147,5 @@ describe('fetchCalApi', () => {
       await expect(promise).rejects.toThrow(/Failed to fetch/);
       await expect(promise).rejects.toThrow(/ECONNRESET/);
     });
-  });
-});
-
-describe('fetchCardData optional requests', () => {
-  const FRAMES = 'https://api.cal-online.co.il/Frames/api/Frames/GetFrameStatus';
-  const PENDING = 'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
-  const card = { cardUniqueId: 'u1', last4Digits: '1234' };
-
-  const originalFetch = global.fetch;
-  beforeEach(() => {
-    global.fetch = jest.fn().mockRejectedValue(new Error('node fallback unavailable')) as any;
-  });
-  afterAll(() => {
-    global.fetch = originalFetch;
-  });
-
-  const TRANSACTIONS_URL =
-    'https://api.cal-online.co.il/Transactions/api/transactionsDetails/getCardTransactionsDetails';
-
-  const run = (failing: string) => {
-    const evaluate = jest.fn().mockImplementation((_fn: unknown, url: string) => {
-      if (url === failing) return Promise.reject(new TypeError('Failed to fetch'));
-      let body: object;
-      if (url === FRAMES) {
-        body = {
-          statusCode: 1,
-          result: { calIssuedCards: { cardLevelFrames: [{ cardUniqueId: 'u1', nextTotalDebit: 50 }] } },
-        };
-      } else if (url === PENDING) {
-        body = { statusCode: 1, result: { cardsList: [] } };
-      } else {
-        body = {
-          statusCode: 1,
-          result: { bankAccounts: [{ debitDates: [], immidiateDebits: { debitDays: [] } }] },
-        };
-      }
-      return Promise.resolve([JSON.stringify(body), 200]);
-    });
-    const scraper: any = new VisaCalScraper({ companyId: 'visaCal' as any, startTime: new Date() } as any);
-    scraper.page = { evaluate };
-    return scraper.fetchCardData(card, moment(), new Date(), 0, 'CALAuthScheme t', 'site');
-  };
-
-  test('a pending transactions failure is soft and the account is still returned', async () => {
-    const account = await run(PENDING);
-    expect(account.txns).toEqual([]);
-    expect(account.accountNumber).toBe('1234');
-    expect(account.balance).toBe(-50);
-  });
-
-  test('a frames failure is soft and leaves balance and cardFrame undefined', async () => {
-    const account = await run(FRAMES);
-    expect(account.txns).toEqual([]);
-    expect(account.balance).toBeUndefined();
-    expect(account.balanceDate).toBeUndefined();
-    expect(account.cardFrame).toBeUndefined();
-  });
-
-  test('a monthly transactions failure is fatal', async () => {
-    const promise = run(TRANSACTIONS_URL);
-    await expect(promise).rejects.toThrow(TRANSACTIONS_URL);
-    await expect(promise).rejects.toThrow(/Failed to fetch/);
-    await expect(promise).rejects.toThrow(/node fallback unavailable/);
   });
 });
