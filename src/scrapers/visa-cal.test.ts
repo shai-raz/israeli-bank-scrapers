@@ -1,7 +1,7 @@
 import { SCRAPERS } from '../definitions';
 import { exportTransactions, extendAsyncTimeout, getTestsConfig, maybeTestCompanyAPI } from '../tests/tests-utils';
 import { LoginResults } from './base-scraper-with-browser';
-import VisaCalScraper, { fetchCalApi } from './visa-cal';
+import VisaCalScraper from './visa-cal';
 
 const COMPANY_ID = 'visaCal'; // TODO this property should be hard-coded in the provider
 const testsConfig = getTestsConfig();
@@ -50,102 +50,5 @@ describe('VisaCal legacy scraper', () => {
     // uncomment to test multiple accounts
     // expect(result?.accounts?.length).toEqual(2)
     exportTransactions(COMPANY_ID, result.accounts || []);
-  });
-});
-
-describe('fetchCalApi', () => {
-  const URL = 'https://api.cal-online.co.il/Frames/api/Frames/GetFrameStatus';
-  const mockPage = (result: [string, number]) => ({ evaluate: jest.fn().mockResolvedValue(result) }) as any;
-
-  test('parses a JSON success response and passes request details into the page', async () => {
-    const page = mockPage(['{"statusCode":1,"result":{"a":2}}', 200]);
-    const result = await fetchCalApi(page, URL, { x: 1 }, { Authorization: 'CALAuthScheme t', 'X-Site-Id': 's' });
-    expect(result).toEqual({ statusCode: 1, result: { a: 2 } });
-    expect(page.evaluate).toHaveBeenCalledWith(
-      expect.any(Function),
-      URL,
-      { x: 1 },
-      expect.objectContaining({ 'X-Site-Id': 's' }),
-    );
-  });
-
-  test('throws a clear error naming endpoint and status on an HTML block page', async () => {
-    const page = mockPage(['<html><head>Request Rejected</head></html>', 200]);
-    const promise = fetchCalApi(page, URL, {}, {});
-    await expect(promise).rejects.toThrow(/non-JSON response/);
-    await expect(promise).rejects.toThrow(URL);
-    await expect(promise).rejects.toThrow(/status 200/);
-    await expect(promise).rejects.not.toThrow(/Unexpected token/);
-  });
-
-  test('returns a JSON error body whatever its status, so callers keep handling its statusCode', async () => {
-    const page = mockPage(['{"statusCode":3,"title":"error"}', 500]);
-    await expect(fetchCalApi(page, URL, {}, {})).resolves.toEqual({ statusCode: 3, title: 'error' });
-  });
-
-  describe('node fallback', () => {
-    const originalFetch = global.fetch;
-    const nodeFetch = jest.fn();
-    const rejectingPage = (message: string) => ({ evaluate: jest.fn().mockRejectedValue(new Error(message)) }) as any;
-    const nodeResponse = (body: string, status: number) => ({ text: () => Promise.resolve(body), status });
-
-    beforeEach(() => {
-      nodeFetch.mockReset();
-      global.fetch = nodeFetch as any;
-    });
-    afterAll(() => {
-      global.fetch = originalFetch;
-    });
-
-    test('does not call node fetch when the in-page request succeeds', async () => {
-      await fetchCalApi(mockPage(['{"a":1}', 200]), URL, {}, {});
-      expect(nodeFetch).not.toHaveBeenCalled();
-    });
-
-    test.each(['Failed to fetch', 'Execution context was destroyed, most likely because of a navigation'])(
-      'falls back to node when the in-page request rejects with "%s"',
-      async message => {
-        nodeFetch.mockResolvedValue(nodeResponse('{"statusCode":1}', 200));
-        const result = await fetchCalApi(rejectingPage(message), `${URL}?a=1`, { x: 1 }, { Authorization: 'a' });
-        expect(result).toEqual({ statusCode: 1 });
-        expect(nodeFetch).toHaveBeenCalledTimes(1);
-        const [calledUrl, init] = nodeFetch.mock.calls[0];
-        expect(calledUrl).toBe(`${URL}?a=1`);
-        expect(init.method).toBe('POST');
-        expect(init.body).toBe('{"x":1}');
-        expect(init.headers).toEqual(
-          expect.objectContaining({
-            Origin: 'https://digital-web.cal-online.co.il',
-            Referer: 'https://digital-web.cal-online.co.il',
-            Authorization: 'a',
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-          }),
-        );
-      },
-    );
-
-    test('does not fall back when the page got an HTTP response', async () => {
-      await expect(fetchCalApi(mockPage(['<html>Rejected</html>', 400]), URL, {}, {})).rejects.toThrow(
-        'non-JSON response (status 400)',
-      );
-      expect(nodeFetch).not.toHaveBeenCalled();
-    });
-
-    test('names the endpoint and both failures when the fallback returns a bad response', async () => {
-      nodeFetch.mockResolvedValue(nodeResponse('<html>Request Rejected</html>', 403));
-      const promise = fetchCalApi(rejectingPage('Failed to fetch'), `${URL}?a=1`, {}, {});
-      await expect(promise).rejects.toThrow(URL);
-      await expect(promise).rejects.toThrow(/Failed to fetch/);
-      await expect(promise).rejects.toThrow(/non-JSON response \(status 403\)/);
-    });
-
-    test('names the endpoint and both failures when the fallback rejects', async () => {
-      nodeFetch.mockRejectedValue(new Error('ECONNRESET'));
-      const promise = fetchCalApi(rejectingPage('Failed to fetch'), URL, {}, {});
-      await expect(promise).rejects.toThrow(URL);
-      await expect(promise).rejects.toThrow(/Failed to fetch/);
-      await expect(promise).rejects.toThrow(/ECONNRESET/);
-    });
   });
 });
