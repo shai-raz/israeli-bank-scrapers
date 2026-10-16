@@ -19,18 +19,6 @@ import { type ScraperScrapingResult, type ScraperOptions } from './interface';
 const apiHeaders = {
   'User-Agent':
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-};
-const LOGIN_URL = 'https://www.cal-online.co.il/';
-const TRANSACTIONS_REQUEST_ENDPOINT =
-  'https://api.cal-online.co.il/Transactions/api/transactionsDetails/getCardTransactionsDetails';
-const FRAMES_REQUEST_ENDPOINT = 'https://api.cal-online.co.il/Frames/api/Frames/GetFrameStatus';
-const PENDING_TRANSACTIONS_REQUEST_ENDPOINT =
-  'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
-const SSO_AUTHORIZATION_REQUEST_ENDPOINT = 'https://connect.cal-online.co.il/col-rest/calconnect/authentication/SSO';
-
-// Used only when the in-page request fails: mirrors the headers Cal's own web app sends from digital-web.cal-online.co.il.
-const nodeFallbackHeaders = {
-  ...apiHeaders,
   Origin: 'https://digital-web.cal-online.co.il',
   Referer: 'https://digital-web.cal-online.co.il',
   'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -38,81 +26,14 @@ const nodeFallbackHeaders = {
   'Sec-Fetch-Mode': 'cors',
   'Sec-Fetch-Dest': 'empty',
 };
-
-// The status is deliberately not checked: Cal returns JSON error bodies (with their own statusCode) that the
-// callers already handle, so only a non-JSON response (e.g. a bot-protection HTML page) is an error here.
-function parseCalResponse<TResult>(endpoint: string, text: string, status: number): TResult {
-  try {
-    return JSON.parse(text) as TResult;
-  } catch {
-    const snippet = text.slice(0, 200).replace(/\s+/g, ' ');
-    throw new Error(`Cal API request to ${endpoint} returned a non-JSON response (status ${status}): ${snippet}`);
-  }
-}
-
-/**
- * Sends a POST request to the Cal API from inside the logged-in page, so that all traffic (including
- * any proxy configured on the browser) leaves from the browser. `Origin` and `Referer` are set by the
- * browser itself.
- *
- * If the in-page request produces no HTTP response (CORS failure when the dashboard is not on
- * digital-web.cal-online.co.il, or the page navigated and its context is gone), the request is retried
- * once from Node. Any HTTP response from the page, whatever its status, is final.
- */
-export async function fetchCalApi<TResult>(
-  page: Page,
-  url: string,
-  data: Record<string, any>,
-  headers: Record<string, string>,
-): Promise<TResult> {
-  const endpoint = url.split('?')[0];
-  let text: string;
-  let status: number;
-  try {
-    [text, status] = await page.evaluate(
-      async (innerUrl: string, innerData: Record<string, any>, innerHeaders: Record<string, string>) => {
-        const response = await fetch(innerUrl, {
-          method: 'POST',
-          body: JSON.stringify(innerData),
-          credentials: 'include',
-          headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...innerHeaders },
-        });
-        return [await response.text(), response.status] as const;
-      },
-      url,
-      data,
-      headers,
-    );
-  } catch (e) {
-    const inPageError = (e as Error)?.message ?? String(e);
-    debug('in-page request to %s failed, falling back to node: %s', endpoint, inPageError);
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        body: JSON.stringify(data),
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...nodeFallbackHeaders, ...headers },
-      });
-      [text, status] = [await response.text(), response.status];
-    } catch (fallbackError) {
-      throw new Error(
-        `Cal API request to ${endpoint} failed in the browser: ${inPageError}; node fallback also failed: ${
-          (fallbackError as Error)?.message ?? String(fallbackError)
-        }`,
-      );
-    }
-    try {
-      return parseCalResponse<TResult>(endpoint, text, status);
-    } catch (fallbackError) {
-      throw new Error(
-        `Cal API request to ${endpoint} failed in the browser: ${inPageError}; node fallback also failed: ${
-          (fallbackError as Error).message
-        }`,
-      );
-    }
-  }
-
-  return parseCalResponse<TResult>(endpoint, text, status);
-}
+const jsonHeaders = { Accept: 'application/json', 'Content-Type': 'application/json' };
+const LOGIN_URL = 'https://www.cal-online.co.il/';
+const TRANSACTIONS_REQUEST_ENDPOINT =
+  'https://api.cal-online.co.il/Transactions/api/transactionsDetails/getCardTransactionsDetails';
+const FRAMES_REQUEST_ENDPOINT = 'https://api.cal-online.co.il/Frames/api/Frames/GetFrameStatus';
+const PENDING_TRANSACTIONS_REQUEST_ENDPOINT =
+  'https://api.cal-online.co.il/Transactions/api/approvals/getClearanceRequests';
+const SSO_AUTHORIZATION_REQUEST_ENDPOINT = 'https://connect.cal-online.co.il/col-rest/calconnect/authentication/SSO';
 
 const InvalidPasswordMessage = 'שם המשתמש או הסיסמה שהוזנו שגויים';
 const ChangePasswordMessage = 'להחליף סיסמה';
@@ -489,6 +410,71 @@ function convertParsedDataToTransactions(
 
     return result;
   });
+}
+
+// The status is deliberately not checked: Cal returns JSON error bodies (with their own statusCode) that the
+// callers already handle, so only a non-JSON response (e.g. a bot-protection HTML page) is an error here.
+function parseCalResponse<TResult>(url: string, text: string, status: number): TResult {
+  try {
+    return JSON.parse(text) as TResult;
+  } catch {
+    const snippet = text.slice(0, 200).replace(/\s+/g, ' ');
+    throw new Error(`Cal API request to ${url} returned a non-JSON response (status ${status}): ${snippet}`);
+  }
+}
+
+/**
+ * Sends a POST request to the Cal API from inside the logged-in page, so that it goes through the browser
+ * (and any proxy configured on it). `Origin` and `Referer` are set by the browser itself.
+ *
+ * If the in-page request produces no HTTP response (CORS failure when the dashboard is not on
+ * digital-web.cal-online.co.il, or the page navigated and its context is gone), the request is retried
+ * once from Node, outside the browser and its proxy, with the headers Cal's own web app sends. Any HTTP
+ * response from the page, whatever its status, is final.
+ */
+export async function fetchCalApi<TResult>(
+  page: Page,
+  url: string,
+  data: Record<string, any>,
+  headers: Record<string, string>,
+): Promise<TResult> {
+  let text: string;
+  let status: number;
+  try {
+    [text, status] = await page.evaluate(
+      async (innerUrl: string, innerData: Record<string, any>, innerHeaders: Record<string, string>) => {
+        const response = await fetch(innerUrl, {
+          method: 'POST',
+          body: JSON.stringify(innerData),
+          credentials: 'include',
+          headers: innerHeaders,
+        });
+        return [await response.text(), response.status] as const;
+      },
+      url,
+      data,
+      { ...jsonHeaders, ...headers },
+    );
+  } catch (e) {
+    const inPageError = (e as Error).message;
+    debug('in-page request to %s failed, falling back to node: %s', url, inPageError);
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        body: JSON.stringify(data),
+        headers: { ...jsonHeaders, ...headers, ...apiHeaders },
+      });
+      return parseCalResponse<TResult>(url, await response.text(), response.status);
+    } catch (fallbackError) {
+      throw new Error(
+        `Cal API request to ${url} failed in the browser: ${inPageError}; node fallback also failed: ${
+          (fallbackError as Error).message
+        }`,
+      );
+    }
+  }
+
+  return parseCalResponse<TResult>(url, text, status);
 }
 
 type ScraperSpecificCredentials = { username: string; password: string };
